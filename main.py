@@ -1,4 +1,8 @@
 # from mini_imagenet_dataloader import MiniImageNetDataLoader
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
+
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch
@@ -25,37 +29,13 @@ def conv_block(in_channels, out_channels, **kwargs):
 
 
 def get_accuracy(logits, targets):
-    """Compute the accuracy (after adaptation) of MAML on the test/query points
-    Parameters
-    ----------
-    logits : `torch.FloatTensor` instance
-        Outputs/logits of the model on the query points. This tensor has shape
-        `(num_examples, num_classes)`.
-    targets : `torch.LongTensor` instance
-        A tensor containing the targets of the query points. This tensor has 
-        shape `(num_examples,)`.
-    Returns
-    -------
-    accuracy : `torch.FloatTensor` instance
-        Mean accuracy on the query points
-    """
     _, predictions = torch.max(logits, dim=-1)
     return torch.mean(predictions.eq(targets).float())
 
 class MetaConvModel(MetaModule):
     """4-layer Convolutional Neural Network architecture from [1].
     Parameters
-    ----------
-    in_channels : int
-        Number of channels for the input images.
-    out_features : int
-        Number of classes (output of the model).
-    hidden_size : int (default: 64)
-        Number of channels in the intermediate representations.
-    feature_size : int (default: 64)
-        Number of features returned by the convolutional head.
-    References
-    ----------
+
     .. [1] Finn C., Abbeel P., and Levine, S. (2017). Model-Agnostic Meta-Learning
            for Fast Adaptation of Deep Networks. International Conference on
            Machine Learning (ICML) (https://arxiv.org/abs/1703.03400)
@@ -90,15 +70,7 @@ def ModelConvMiniImagenet(out_features, hidden_size=84):
     return MetaConvModel(3, out_features, hidden_size=hidden_size,
                          feature_size=5 * 5 * hidden_size)
 def train():
-    # dataloader = MiniImageNetDataLoader(shot_num=5, way_num=5, episode_test_sample_num=15)
-
-    # dataloader.load_list(phase='all')
-
-    # episode_train_img, episode_train_label, episode_test_img, episode_test_label = \
-    #     dataloader.get_batch(phase='train', idx=0)
-
     transform = transforms.Compose([
-        # you can add other transformations in this list
         transforms.Resize(84),
         transforms.ToTensor()
     ])
@@ -108,25 +80,27 @@ def train():
     dataloader = BatchMetaDataLoader(dataset, batch_size=1, shuffle=True)
     
     model = ModelConvMiniImagenet(5)
-    model.to(device='cpu')
+    model.to(device='cuda')
     model.train()
     meta_optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    with tqdm(dataloader, total=25) as pbar:
+    accuracy_l = list()
+
+    with tqdm(dataloader, total=1000) as pbar:
         for batch_idx, batch in enumerate(pbar):
 
             model.zero_grad()
 
             train_inputs, train_targets = batch['train']
-            train_inputs = train_inputs.to(device='cpu')
-            train_targets = train_targets.to(device='cpu')
+            train_inputs = train_inputs.to(device='cuda')
+            train_targets = train_targets.to(device='cuda')
 
             test_inputs, test_targets = batch['test']
-            test_inputs = test_inputs.to(device='cpu')
-            test_targets = test_targets.to(device='cpu')
+            test_inputs = test_inputs.to(device='cuda')
+            test_targets = test_targets.to(device='cuda')
 
-            outer_loss = torch.tensor(0., device='cpu')
-            accuracy = torch.tensor(0., device='cpu')
+            outer_loss = torch.tensor(0., device='cuda')
+            accuracy = torch.tensor(0., device='cuda')
             for task_idx, (train_input, train_target, test_input,
                     test_target) in enumerate(zip(train_inputs, train_targets,
                     test_inputs, test_targets)):
@@ -147,10 +121,14 @@ def train():
 
             outer_loss.backward()
             meta_optimizer.step()
-
+            accuracy_l.append(accuracy.item())
             pbar.set_postfix(accuracy='{0:.4f}'.format(accuracy.item()))
-            if(batch_idx >= 25):
+            if(batch_idx >= 1000):
                 break
+
+
+    plt.plot(accuracy_l)
+    plt.show()
 
 if __name__ == "__main__":
     train()
